@@ -1,0 +1,6 @@
+* dns
+
+A project to learn the DNS protocol.
+
+My goal is to build a library, a client like dig, and maybe if I am still interested a name server or resolver.
+I aim at compliance with RFCs [[https://www.rfc-editor.org/info/rfc1034/][1034]] and [[https://www.rfc-editor.org/info/rfc1035/][1035]] to begin.
