@@ -1,24 +1,51 @@
 use crate::{
-    message::{Message, MessageKind, Question, ResourceRecordData},
-    types::{DomainName, Opcode, QClass, QType, RClass, RType, ResponseCode},
+    message::{DomainName, Message, MessageKind, Question, ResourceRecordData},
+    types::{Opcode, QClass, QType, RClass, RType, ResponseCode},
 };
 
 #[derive(Debug, Copy, Clone)]
-pub enum ToWireError<'a> {
+pub struct ToWireResult {
+    pub truncation: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum ToWireError {
+    MaxSizeTooSmall,
     TooManyQuestionRecords,
     TooManyAnswerRecords,
     TooManyAuthorityRecords,
     TooManyAdditionalRecords,
-    LabelTooLong(&'a [u8]),
+    LabelTooLong(Vec<u8>),
 }
 
 pub trait ToWire {
-    fn to_wire(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError>;
+    fn to_wire(&self, buf: &mut Vec<u8>, max_size: usize) -> Result<ToWireResult, ToWireError>;
 }
 
-fn extract_header_info(message: &Message) -> u16 {
+trait ToWireEntity {
+    fn to_wire_entity(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError>;
+}
+
+fn write_header(
+    buf: &mut [u8],
+    message: &Message,
+    question_count: u16,
+    answer_count: u16,
+    authority_count: u16,
+    additional_count: u16,
+    truncation: bool,
+) {
+    buf[..2].copy_from_slice(&message.id.to_be_bytes());
+    buf[2..4].copy_from_slice(&extract_header_info(message, truncation).to_be_bytes());
+    buf[4..6].copy_from_slice(&question_count.to_be_bytes());
+    buf[6..8].copy_from_slice(&answer_count.to_be_bytes());
+    buf[8..10].copy_from_slice(&authority_count.to_be_bytes());
+    buf[10..12].copy_from_slice(&additional_count.to_be_bytes());
+}
+
+fn extract_header_info(message: &Message, truncation: bool) -> u16 {
     let mut info = u16::from(message.opcode) << 11
-        | u16::from(message.truncation) << 9
+        | u16::from(truncation) << 9
         | u16::from(message.recursion_desired) << 8;
 
     if let MessageKind::Response {
@@ -31,66 +58,96 @@ fn extract_header_info(message: &Message) -> u16 {
         info |= 1u16 << 15
             | u16::from(authoritative) << 10
             | u16::from(recursion_available) << 7
-            | u16::from(response_code)
+            | u16::from(response_code) & 0x000F
     }
 
     info
 }
 
 impl ToWire for Message {
-    fn to_wire(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError<'_>> {
-        // Header section
-        buf.extend_from_slice(&self.id.to_be_bytes());
+    fn to_wire(&self, buf: &mut Vec<u8>, max_size: usize) -> Result<ToWireResult, ToWireError> {
+        let zero = buf.len();
 
-        let info = extract_header_info(self);
-        buf.extend_from_slice(&info.to_be_bytes());
+        // The header needs 12 octets
+        if max_size < 12 {
+            return Err(ToWireError::MaxSizeTooSmall);
+        }
 
-        let qd_count =
-            u16::try_from(self.questions.len()).map_err(|_| ToWireError::TooManyQuestionRecords)?;
-        buf.extend_from_slice(&qd_count.to_be_bytes());
+        if self.questions.len() > u16::MAX as usize {
+            return Err(ToWireError::TooManyQuestionRecords);
+        }
 
-        let (an_count, ns_count, ar_count) = match &self.kind {
-            MessageKind::Query => Ok((0u16, 0u16, 0u16)),
-            MessageKind::Response {
-                answer,
-                authority,
-                additional,
-                ..
-            } => Ok((
-                u16::try_from(answer.len()).map_err(|_| ToWireError::TooManyAnswerRecords)?,
-                u16::try_from(authority.len()).map_err(|_| ToWireError::TooManyAuthorityRecords)?,
-                u16::try_from(additional.len())
-                    .map_err(|_| ToWireError::TooManyAdditionalRecords)?,
-            )),
-        }?;
-        buf.extend_from_slice(&an_count.to_be_bytes());
-        buf.extend_from_slice(&ns_count.to_be_bytes());
-        buf.extend_from_slice(&ar_count.to_be_bytes());
+        if let MessageKind::Response {
+            answer,
+            authority,
+            additional,
+            ..
+        } = &self.kind
+        {
+            if answer.len() > u16::MAX as usize {
+                return Err(ToWireError::TooManyAnswerRecords);
+            }
+
+            if authority.len() > u16::MAX as usize {
+                return Err(ToWireError::TooManyAuthorityRecords);
+            }
+
+            if additional.len() > u16::MAX as usize {
+                return Err(ToWireError::TooManyAdditionalRecords);
+            }
+        }
+
+        // Reserve 12 octets for the header section
+        buf.resize(zero + 12, 0u8);
+
+        let mut truncation = false;
 
         // Question section
-        self.questions
-            .iter()
-            .try_for_each(|question| question.to_wire(buf))?;
+        let mut question_count = 0u16;
+        for question in &self.questions {
+            let current_size = buf.len();
+            question.to_wire_entity(buf).inspect_err(|_| {
+                buf.truncate(zero);
+            })?;
+            if buf.len() - zero > max_size {
+                buf.truncate(current_size);
+                truncation = true;
+                break;
+            }
+            question_count += 1;
+        }
 
         // TODO: Answer, Authority and Additional sections in responses
-        Ok(())
+
+        // Populate the header with the correct information
+        write_header(
+            &mut buf[zero..zero + 12],
+            self,
+            question_count,
+            0u16,
+            0u16,
+            0u16,
+            truncation,
+        );
+
+        Ok(ToWireResult { truncation })
     }
 }
 
-impl ToWire for Question {
-    fn to_wire(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError> {
-        self.qname.to_wire(buf)?;
+impl ToWireEntity for Question {
+    fn to_wire_entity(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError> {
+        self.qname.to_wire_entity(buf)?;
         buf.extend_from_slice(&u16::from(self.qtype).to_be_bytes());
         buf.extend_from_slice(&u16::from(self.qclass).to_be_bytes());
         Ok(())
     }
 }
 
-impl ToWire for DomainName {
-    fn to_wire(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError> {
+impl ToWireEntity for DomainName {
+    fn to_wire_entity(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError> {
         self.iter().try_for_each(|label| {
             if label.len() >= 64 {
-                Err(ToWireError::LabelTooLong(&label))
+                Err(ToWireError::LabelTooLong(label.clone()))
             } else {
                 buf.push(label.len() as u8);
                 buf.extend_from_slice(label);

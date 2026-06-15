@@ -1,5 +1,3 @@
-pub type DomainName = Vec<Vec<u8>>;
-
 #[derive(Debug, Clone, Copy)]
 pub enum Opcode {
     Standard,

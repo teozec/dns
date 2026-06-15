@@ -1,13 +1,14 @@
 use std::net::Ipv4Addr;
 
-use crate::types::{DomainName, Opcode, QClass, QType, RClass, RType, ResponseCode};
+use crate::types::{Opcode, QClass, QType, RClass, RType, ResponseCode};
+
+pub type DomainName = Vec<Vec<u8>>;
 
 #[derive(Debug)]
 pub struct Message {
     pub id: u16,
     pub kind: MessageKind,
     pub opcode: Opcode,
-    pub truncation: bool,
     pub recursion_desired: bool,
     pub questions: Vec<Question>,
 }
