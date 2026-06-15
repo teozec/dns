@@ -26,14 +26,14 @@ pub enum MessageKind {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Question {
     pub qname: DomainName,
     pub qtype: QType,
     pub qclass: QClass,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResourceRecord {
     pub name: DomainName,
     pub class: RClass,
@@ -41,7 +41,7 @@ pub struct ResourceRecord {
     pub rdata: ResourceRecordData,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ResourceRecordData {
     A(Ipv4Addr),
     NS(DomainName),
