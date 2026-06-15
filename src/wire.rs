@@ -3,8 +3,17 @@ use crate::{
     types::{DomainName, Opcode, QClass, QType, RClass, RType, ResponseCode},
 };
 
+#[derive(Debug, Copy, Clone)]
+pub enum ToWireError<'a> {
+    TooManyQuestionRecords,
+    TooManyAnswerRecords,
+    TooManyAuthorityRecords,
+    TooManyAdditionalRecords,
+    LabelTooLong(&'a [u8]),
+}
+
 pub trait ToWire {
-    fn to_wire(&self, buf: &mut Vec<u8>);
+    fn to_wire(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError>;
 }
 
 fn extract_header_info(message: &Message) -> u16 {
@@ -29,62 +38,67 @@ fn extract_header_info(message: &Message) -> u16 {
 }
 
 impl ToWire for Message {
-    fn to_wire(&self, buf: &mut Vec<u8>) {
+    fn to_wire(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError<'_>> {
         // Header section
         buf.extend_from_slice(&self.id.to_be_bytes());
 
         let info = extract_header_info(self);
         buf.extend_from_slice(&info.to_be_bytes());
 
-        let qd_count = u16::try_from(self.questions.len()).expect("Too many question records"); // TODO: error handling
+        let qd_count =
+            u16::try_from(self.questions.len()).map_err(|_| ToWireError::TooManyQuestionRecords)?;
         buf.extend_from_slice(&qd_count.to_be_bytes());
 
         let (an_count, ns_count, ar_count) = match &self.kind {
-            MessageKind::Query => (0u16, 0u16, 0u16),
+            MessageKind::Query => Ok((0u16, 0u16, 0u16)),
             MessageKind::Response {
                 answer,
                 authority,
                 additional,
                 ..
-            } => (
-                u16::try_from(answer.len()).expect("Too many answer records"),
-                u16::try_from(authority.len()).expect("Too many authority records"),
-                u16::try_from(additional.len()).expect("Too many additional records"),
-            ),
-        };
+            } => Ok((
+                u16::try_from(answer.len()).map_err(|_| ToWireError::TooManyAnswerRecords)?,
+                u16::try_from(authority.len()).map_err(|_| ToWireError::TooManyAuthorityRecords)?,
+                u16::try_from(additional.len())
+                    .map_err(|_| ToWireError::TooManyAdditionalRecords)?,
+            )),
+        }?;
         buf.extend_from_slice(&an_count.to_be_bytes());
         buf.extend_from_slice(&ns_count.to_be_bytes());
         buf.extend_from_slice(&ar_count.to_be_bytes());
 
-	// Question section
+        // Question section
         self.questions
             .iter()
-            .for_each(|question| question.to_wire(buf));
+            .try_for_each(|question| question.to_wire(buf))?;
 
         // TODO: Answer, Authority and Additional sections in responses
+        Ok(())
     }
 }
 
 impl ToWire for Question {
-    fn to_wire(&self, buf: &mut Vec<u8>) {
-        // TODO: Append qname
-        self.qname.to_wire(buf);
+    fn to_wire(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError> {
+        self.qname.to_wire(buf)?;
         buf.extend_from_slice(&u16::from(self.qtype).to_be_bytes());
         buf.extend_from_slice(&u16::from(self.qclass).to_be_bytes());
+        Ok(())
     }
 }
 
 impl ToWire for DomainName {
-    fn to_wire(&self, buf: &mut Vec<u8>) {
-        self.iter().for_each(|label| {
-            let len = u8::try_from(label.len()).expect("Label too long");
-            if len >= 64 {
-                panic!("Label too long");
+    fn to_wire(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError> {
+        self.iter().try_for_each(|label| {
+            if label.len() >= 64 {
+                Err(ToWireError::LabelTooLong(&label))
+            } else {
+                buf.push(label.len() as u8);
+                buf.extend_from_slice(label);
+                Ok(())
             }
-            buf.push(len);
-            buf.extend_from_slice(label);
-        });
+        })?;
         buf.push(0u8);
+        Ok(())
     }
 }
 
