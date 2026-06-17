@@ -26,6 +26,7 @@ trait ToWireEntity {
     fn to_wire_entity(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError>;
 }
 
+/// RFC 1035 - Section 4.1.1
 fn write_header(
     buf: &mut [u8],
     message: &Message,
@@ -135,15 +136,41 @@ impl ToWire for Message {
 }
 
 impl ToWireEntity for Question {
+    /// RFC 1035 - Section 4.1.2
     fn to_wire_entity(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError> {
+        // A domain name represented as a sequence of labels.
         self.qname.to_wire_entity(buf)?;
+
+        // A two octet code which specifies the type of the query.
         buf.extend_from_slice(&u16::from(self.qtype).to_be_bytes());
+
+        // A two octet code that specifies the class of the query.
         buf.extend_from_slice(&u16::from(self.qclass).to_be_bytes());
         Ok(())
     }
 }
 
 impl ToWireEntity for DomainName {
+    /// RFC 1035 - Section 3.1
+    ///
+    /// Domain names in messages are expressed in terms of a sequence of labels.
+    /// Each label is represented as a one octet length field followed by that
+    /// number of octets.  Since every domain name ends with the null label of
+    /// the root, a domain name is terminated by a length byte of zero.  The
+    /// high order two bits of every length octet must be zero, and the
+    /// remaining six bits of the length field limit the label to 63 octets or
+    /// less.
+    ///
+    /// To simplify implementations, the total length of a domain name (i.e.,
+    /// label octets and label length octets) is restricted to 255 octets or
+    /// less.
+    ///
+    /// Although labels can contain any 8 bit values in octets that make up a
+    /// label, it is strongly recommended that labels follow the preferred
+    /// syntax described elsewhere in this memo, which is compatible with
+    /// existing host naming conventions.  Name servers and resolvers must
+    /// compare labels in a case-insensitive manner (i.e., A=a), assuming ASCII
+    /// with zero parity.  Non-alphabetic codes must match exactly.
     fn to_wire_entity(&self, buf: &mut Vec<u8>) -> Result<(), ToWireError> {
         self.iter().try_for_each(|label| {
             if label.len() >= 64 {
@@ -159,6 +186,7 @@ impl ToWireEntity for DomainName {
     }
 }
 
+/// RFC 1035 - Section 4.1.1
 impl From<Opcode> for u8 {
     fn from(opcode: Opcode) -> u8 {
         match opcode {
@@ -176,6 +204,7 @@ impl From<Opcode> for u16 {
     }
 }
 
+/// RFC 1035 - Section 4.1.1
 impl From<ResponseCode> for u8 {
     fn from(response_code: ResponseCode) -> u8 {
         match response_code {
@@ -196,6 +225,7 @@ impl From<ResponseCode> for u16 {
     }
 }
 
+/// RFC 1035 - Section 3.2.4
 impl From<RClass> for u16 {
     fn from(class: RClass) -> u16 {
         match class {
@@ -208,6 +238,7 @@ impl From<RClass> for u16 {
     }
 }
 
+/// RFC 1035 - Section 3.2.5
 impl From<QClass> for u16 {
     fn from(qclass: QClass) -> u16 {
         match qclass {
@@ -217,6 +248,7 @@ impl From<QClass> for u16 {
     }
 }
 
+/// RFC 1035 - Section 3.2.2
 impl From<RType> for u16 {
     fn from(qtype: RType) -> u16 {
         match qtype {
@@ -241,6 +273,7 @@ impl From<RType> for u16 {
     }
 }
 
+/// RFC 1035 - Section 3.2.3
 impl From<QType> for u16 {
     fn from(qtype: QType) -> u16 {
         match qtype {
