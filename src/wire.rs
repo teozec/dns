@@ -53,7 +53,6 @@ fn extract_header_info(message: &Message, truncation: bool) -> u16 {
         authoritative,
         recursion_available,
         response_code,
-        ..
     } = message.kind
     {
         info |= 1u16 << 15
@@ -74,28 +73,20 @@ impl ToWire for Message {
             return Err(ToWireError::MaxSizeTooSmall);
         }
 
-        if self.questions.len() > u16::MAX as usize {
+        if self.question.len() > u16::MAX as usize {
             return Err(ToWireError::TooManyQuestionRecords);
         }
 
-        if let MessageKind::Response {
-            answer,
-            authority,
-            additional,
-            ..
-        } = &self.kind
-        {
-            if answer.len() > u16::MAX as usize {
-                return Err(ToWireError::TooManyAnswerRecords);
-            }
+        if self.answer.len() > u16::MAX as usize {
+            return Err(ToWireError::TooManyAnswerRecords);
+        }
 
-            if authority.len() > u16::MAX as usize {
-                return Err(ToWireError::TooManyAuthorityRecords);
-            }
+        if self.authority.len() > u16::MAX as usize {
+            return Err(ToWireError::TooManyAuthorityRecords);
+        }
 
-            if additional.len() > u16::MAX as usize {
-                return Err(ToWireError::TooManyAdditionalRecords);
-            }
+        if self.additional.len() > u16::MAX as usize {
+            return Err(ToWireError::TooManyAdditionalRecords);
         }
 
         // Reserve 12 octets for the header section
@@ -105,7 +96,7 @@ impl ToWire for Message {
 
         // Question section
         let mut question_count = 0u16;
-        for question in &self.questions {
+        for question in &self.question {
             let current_size = buf.len();
             question.to_wire_entity(buf).inspect_err(|_| {
                 buf.truncate(zero);
@@ -311,8 +302,20 @@ mod tests {
                 self.recursion_desired = v;
                 self
             }
-            fn questions(mut self, q: Vec<Question>) -> Self {
-                self.questions = q;
+            fn question(mut self, q: Vec<Question>) -> Self {
+                self.question = q;
+                self
+            }
+            fn answer(mut self, q: Vec<ResourceRecord>) -> Self {
+                self.answer = q;
+                self
+            }
+            fn authority(mut self, q: Vec<ResourceRecord>) -> Self {
+                self.authority = q;
+                self
+            }
+            fn additional(mut self, q: Vec<ResourceRecord>) -> Self {
+                self.additional = q;
                 self
             }
         };
@@ -322,7 +325,10 @@ mod tests {
         id: u16,
         recursion_desired: bool,
         opcode: Opcode,
-        questions: Vec<Question>,
+        question: Vec<Question>,
+        answer: Vec<ResourceRecord>,
+        authority: Vec<ResourceRecord>,
+        additional: Vec<ResourceRecord>,
     }
 
     impl QueryBuilder {
@@ -331,7 +337,10 @@ mod tests {
                 id: 0,
                 recursion_desired: false,
                 opcode: Opcode::Standard,
-                questions: vec![],
+                question: vec![],
+                answer: vec![],
+                authority: vec![],
+                additional: vec![],
             }
         }
 
@@ -343,7 +352,10 @@ mod tests {
                 kind: MessageKind::Query,
                 opcode: self.opcode,
                 recursion_desired: self.recursion_desired,
-                questions: self.questions,
+                question: self.question,
+                answer: self.answer,
+                authority: self.authority,
+                additional: self.additional,
             }
         }
     }
@@ -355,7 +367,7 @@ mod tests {
         recursion_desired: bool,
         response_code: ResponseCode,
         opcode: Opcode,
-        questions: Vec<Question>,
+        question: Vec<Question>,
         answer: Vec<ResourceRecord>,
         authority: Vec<ResourceRecord>,
         additional: Vec<ResourceRecord>,
@@ -370,7 +382,7 @@ mod tests {
                 recursion_desired: false,
                 response_code: ResponseCode::NoError,
                 opcode: Opcode::Standard,
-                questions: vec![],
+                question: vec![],
                 answer: vec![],
                 authority: vec![],
                 additional: vec![],
@@ -394,21 +406,6 @@ mod tests {
             self
         }
 
-        fn answer(mut self, v: Vec<ResourceRecord>) -> Self {
-            self.answer = v;
-            self
-        }
-
-        fn authority(mut self, v: Vec<ResourceRecord>) -> Self {
-            self.authority = v;
-            self
-        }
-
-        fn additional(mut self, v: Vec<ResourceRecord>) -> Self {
-            self.additional = v;
-            self
-        }
-
         fn build(self) -> Message {
             Message {
                 id: self.id,
@@ -416,13 +413,13 @@ mod tests {
                     authoritative: self.authoritative,
                     recursion_available: self.recursion_available,
                     response_code: self.response_code,
-                    answer: self.answer,
-                    authority: self.authority,
-                    additional: self.additional,
                 },
                 opcode: self.opcode,
                 recursion_desired: self.recursion_desired,
-                questions: self.questions,
+                question: self.question,
+                answer: self.answer,
+                authority: self.authority,
+                additional: self.additional,
             }
         }
     }
@@ -451,7 +448,7 @@ mod tests {
             let question_number = u16::MAX as usize + 1;
 
             let query = ResponseBuilder::new()
-                .questions(vec![question; question_number])
+                .question(vec![question; question_number])
                 .build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 12 + question_number * 5);
@@ -532,7 +529,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 512);
 
@@ -758,7 +755,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 512);
 
@@ -774,9 +771,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new()
-                .questions(vec![question; 0x01AB])
-                .build();
+            let query = QueryBuilder::new().question(vec![question; 0x01AB]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 12 + 0x01AB * 5);
 
@@ -810,7 +805,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 512);
 
@@ -838,7 +833,7 @@ mod tests {
                 qtype: QType::RType(RType::Unknown(0xABCDu16)),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 512);
 
@@ -854,7 +849,7 @@ mod tests {
                 qtype: QType::RType(RType::A),
                 qclass: QClass::RClass(RClass::Unknown(0xABCD)),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 512);
 
@@ -870,7 +865,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 512);
 
@@ -901,7 +896,7 @@ mod tests {
             };
 
             let query = QueryBuilder::new()
-                .questions(vec![question1, question2])
+                .question(vec![question1, question2])
                 .build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 512);
@@ -948,7 +943,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 512);
 
@@ -982,7 +977,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 512);
 
@@ -1003,7 +998,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 12);
 
@@ -1024,7 +1019,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question; 3]).build();
+            let query = QueryBuilder::new().question(vec![question; 3]).build();
             let mut buf = Vec::<u8>::new();
             let result = query.to_wire(&mut buf, 22);
 
@@ -1057,7 +1052,7 @@ mod tests {
                 qtype: QType::RType(RType::NS),
                 qclass: QClass::RClass(RClass::IN),
             };
-            let query = QueryBuilder::new().questions(vec![question]).build();
+            let query = QueryBuilder::new().question(vec![question]).build();
             let mut buf = vec![0xAAu8, 0xBBu8];
             let result = query.to_wire(&mut buf, 12);
 

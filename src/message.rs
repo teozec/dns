@@ -33,6 +33,12 @@ use crate::types::{Opcode, QClass, QType, RClass, RType, ResponseCode};
 /// less.
 pub type DomainName = Vec<Vec<u8>>;
 
+/// RFC 1035 - Section 3.3
+/// <character-string> is a single length octet followed by that number of characters.
+/// <character-string> is treated as binary information, and can be up to 256 characters
+/// in length (including the length octet).
+pub type CharacterString = Vec<u8>;
+
 /// RFC 1034 - Section 4.3.1
 ///
 /// The principal activity of name servers is to answer standard queries.
@@ -72,7 +78,7 @@ pub struct Message {
     pub kind: MessageKind,
 
     /// A four bit field that specifies kind of query in this message.
-    /// This value is set by the originator of a query and copied into the response. 
+    /// This value is set by the originator of a query and copied into the response.
     pub opcode: Opcode,
 
     /// This bit may be set in a query and is copied into the response.
@@ -81,8 +87,17 @@ pub struct Message {
     pub recursion_desired: bool,
 
     /// The question section is used to carry the "question" in most queries,
-    /// i.e., the parameters that define what is being asked. 
-    pub questions: Vec<Question>,
+    /// i.e., the parameters that define what is being asked.
+    pub question: Vec<Question>,
+
+    /// The answer section contains RRs that answer the question
+    pub answer: Vec<ResourceRecord>,
+
+    /// The authority section contains RRs that point toward an authoritative name server
+    pub authority: Vec<ResourceRecord>,
+
+    /// The additional records section contains RRs which relate to the query, but are not strictly answers for the question
+    pub additional: Vec<ResourceRecord>,
 }
 
 #[derive(Debug)]
@@ -99,15 +114,6 @@ pub enum MessageKind {
 
         /// This 4 bit field is set as part of responses.
         response_code: ResponseCode,
-
-        /// The answer section contains RRs that answer the question
-        answer: Vec<ResourceRecord>,
-
-        /// The authority section contains RRs that point toward an authoritative name server
-        authority: Vec<ResourceRecord>,
-
-        /// The additional records section contains RRs which relate to the query, but are not strictly answers for the question
-        additional: Vec<ResourceRecord>,
     },
 }
 
@@ -172,7 +178,6 @@ pub enum ResourceRecordData {
     /// name for the owner. The owner name is an alias.
     CNAME(DomainName),
 
-
     /// RFC 1035 - Section 3.3.2
     ///
     /// HINFO records are used to acquire general information about a host.
@@ -180,10 +185,10 @@ pub enum ResourceRecordData {
     /// when talking between machines or operating systems of the same type.
     HINFO {
         /// A <character-string> which specifies the CPU type.
-        cpu: Vec<u8>,
+        cpu: CharacterString,
 
         /// A <character-string> which specifies the operating system type.
-        os: Vec<u8>,
+        os: CharacterString,
     },
 
     /// RFC 1035 - Section 3.3.3 (EXPERIMENTAL)
@@ -206,7 +211,7 @@ pub enum ResourceRecordData {
     /// forwarding to the domain.
     /// MF is obsolete.  See the definition of MX and RFC 974.
     MF(DomainName),
-    
+
     /// RFC 1035 - Section 3.3.6 (EXPERIMENTAL)
     ///
     /// A <domain-name> which specifies a mailbox which is a
@@ -280,7 +285,6 @@ pub enum ResourceRecordData {
     /// description of the IN-ADDR.ARPA domain for an example.
     PTR(DomainName),
 
-
     /// RFC 1035 - Section 3.3.13
     SOA {
         /// The <domain-name> of the name server that was the original or primary source of data for this zone.
@@ -314,7 +318,7 @@ pub enum ResourceRecordData {
     /// One or more <character-string>s.
     /// TXT RRs are used to hold descriptive text.  The semantics of the text
     /// depends on the domain where it is found.
-    TXT(Vec<Vec<u8>>),
+    TXT(Vec<CharacterString>),
 
     /// RFC 1035 - Section 3.4.1
     ///
@@ -331,7 +335,7 @@ pub enum ResourceRecordData {
     /// the second to port 1, etc.  If the bit map does not include a bit for a
     /// protocol of interest, that bit is assumed zero.  The appropriate values
     /// and mnemonics for ports and protocols are specified in RFC 1010.
-    /// 
+    ///
     /// The purpose of WKS RRs is to provide availability information for
     /// servers for TCP and UDP.  If a server supports both TCP and UDP, or has
     /// multiple Internet addresses, then multiple WKS RRs are used.
